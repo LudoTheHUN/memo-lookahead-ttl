@@ -46,6 +46,7 @@
 (promisize {:a 1})
 
 
+(into {} (for [[k v] {:a 1}] [k (promisize v)]))
 
 
 (defn memo-lookahead-ttl [f init_cache & setupargs]
@@ -59,7 +60,10 @@
 
          coordination_atom                    (atom {:number_currently_running 0
                                                      :execution_queue clojure.lang.PersistentQueue/EMPTY
-                                                     :cache {}
+                                                     :cache (into {} (for [[k v] init_cache] [k {:cache_answer(promisize v)
+                                                                                                 :status :IDLE
+                                                                                                 ;;WIP fill this out.. .
+                                                                                                 }]))
                                                      }) ;;WRONG vs memo API... we store metadata here too
         ;;TODO atom to hold results
         ;;a way to check what needs to be evicted
