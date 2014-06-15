@@ -39,6 +39,15 @@
 ;;TODO use STM to ensure consitant behaviour
 
 
+(defn- now_ms [] (.getTime (new java.util.Date)))
+
+(defn- promisize [x] (let [p (promise)] (deliver p x)))
+
+(promisize {:a 1})
+
+
+
+
 (defn memo-lookahead-ttl [f init_cache & setupargs]
   (let [setupargs_map (apply hash-map setupargs)
         {:keys [threshold refresh-threshold error-retries max-consecutive-failed-retries global-max-concurrent-requests]
@@ -47,37 +56,57 @@
               error-retries 0
               max-consecutive-failed-retries 0
               global-max-concurrent-requests 1}}  setupargs_map
-         chache_atom                    (atom init_cache) ;;WRONG vs memo API... we store metadata here too
+
+         coordination_atom                    (atom {:number_currently_running 0
+                                                     :execution_queue clojure.lang.PersistentQueue/EMPTY
+                                                     :cache {}
+                                                     }) ;;WRONG vs memo API... we store metadata here too
         ;;TODO atom to hold results
         ;;a way to check what needs to be evicted
         ;;running construct
 
         ]
  (fn [& args]
-   (let [c_atom_before   @chache_atom
+   (let [result_promise (promise)
 
-         attempt-fut     (future (try  (apply f args)           ;;pacify the f
-                                       (catch Exception e e)))
+         c_atom_before   (swap! cache_atom (fn [cache] ))  ;;put primis in if it's appropriate to do so, in the :next spot if main spot is taken, or onto the queue
+
+
 
          ]
 
    {:number_currently_running
-    :execution_queue  [{:retries_left 3 :args [1 2 3]}]
-    :cache {args     {:cache_answer attempt-fut
-               :status :RUNNING   ;;IDLE , RUNNING, ERROR
-               :epoch_keep_at_most_until (+ (.getTime (new java.util.Date)) threshold)
-               :epoch_refresh_after     (+ (.getTime (new java.util.Date)) refresh-threshold)
-               :retries_left                    error-retries
-               :consecutive-failed-retries-left max-consecutive-failed-retries
-
+    :execution_queue  [{:retries_left 3 :args [1 2 3] :timeadded (now_ms)}] ;initially a clojure.lang.PersistentQueue/EMPTY
+    :cache {args
+             {:cache_answer attempt-promise
+              :cache_next_answer attempt-promise
+              :status :RUNNING   ;;IDLE , RUNNING, ERROR
+              :epoch_keep_at_most_until (+ (.getTime (new java.util.Date)) threshold)
+              :epoch_refresh_after     (+ (.getTime (new java.util.Date)) refresh-threshold)
+              :retries_left                    error-retries
+              :consecutive-failed-retries-left max-consecutive-failed-retries
                }}
     }))
   ))
 
 
+
+
+(peek (conj clojure.lang.PersistentQueue/EMPTY {:a 1}))
+(peek (pop clojure.lang.PersistentQueue/EMPTY))
+(swap! (atom {:a 1})  (fn [x] (conj x [:b 3])))
+
+
+
+
 (comment
+
+
+       ;;  attempt-fut     (future (try  (apply f args)           ;;pacify the f
+       ;;                                (catch Exception e e)))
+
 derf chache_atom, if answer available and no need to run, return with result
-  else . if need to run but answer available, return with answer, but beforehand start a future to do the run
+  else . if need to run but answer available, return with answer, but beforehand start a future to do the run + create a primis into which answer will be placed... (via which all other consumers will block untill this is delivered)
  if no answer available, do the run directly (return with answer at the end)
 
   doing a run:
@@ -99,7 +128,7 @@ derf chache_atom, if answer available and no need to run, return with result
 (if sucessfull, switch in the result )
 
  (str (java.util.UUID/randomUUID))
-)
+
 
 
 
@@ -111,6 +140,11 @@ derf chache_atom, if answer available and no need to run, return with result
 (def memoed-slrep-io-fn (memo-lookahead-ttl some-long-running-error-prone-io-fn {} :threshold 132))
 
 (def result1 (memoed-slrep-io-fn 10000 0.2 42))
+
+
+
+(= (promise) (promise) )
+
 
 
 
@@ -171,4 +205,4 @@ derf chache_atom, if answer available and no need to run, return with result
                                                                         ;;   but will be failed and not even attempted if they are not started within :threshold
                  ))
 
-
+)
