@@ -43,10 +43,89 @@
 
 (defn- promisize [x] (let [p (promise)] (deliver p x)))
 
-(promisize {:a 1})
+;;(promisize {:a 1})
 
 
-(into {} (for [[k v] {:a 1}] [k (promisize v)]))
+;;(into {} (for [[k v] {:a 1}] [k (promisize v)]))
+
+
+
+
+(defn get_status_args [coord_atom args_array] )
+
+
+(def demo_coord_map
+   {:work_slots_left 2
+    :execution_queue  [[1 3]] ;initially a clojure.lang.PersistentQueue/EMPTY
+    :cache {[1 2]
+             {:cache_answer (deliver (promise) :42)
+              :status :IDLE   ;;IDLE , RUNNING, ERROR
+              :ttlt   (+ (.getTime (new java.util.Date)) 10000)     ;;time to live till
+              :ttrt   (+ (.getTime (new java.util.Date)) 7000)   ;;time pas which to refresh
+              :retries_left            2
+              :consecutive-failed-retries-left 4
+               }}
+    })
+
+(defn add_promise_to_cache [coord_map args_array threshold refresh-threshold]
+  ;;takes coordination_map, creates a new one ;;creates somewhere to deposit the answer if one doesn't already exist
+  (update-in coord_map [:cache args_array] (fn [cache_map] (if (nil? cache_map)
+                                                               (conj cache_map {:cache_answer  (promise)    ;we'll return this promise
+                                                                                :status        :IDLE
+                                                                                :ttlt          (+ (.getTime (new java.util.Date)) threshold)
+                                                                                :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                                                })
+                                                                cache_map))))
+
+;;(add_promise_to_cache demo_coord_map [1 5] 1000 2000)
+
+
+
+(defn add_item_to_coordination_queue_fn [coord_map args_array]
+  ;;takes coordination_map, creates a new one, adds items to queue if :IDLE
+ (if (= (get-in coord_map [:cache args_array :status]) :IDLE)
+     (-> coord_map
+         (update-in  [:execution_queue] (fn [xq] (conj xq args_array)))
+         (update-in  [:cache args_array] (fn [cache_map] (conj cache_map {:status :QUEUED})))))
+     coord_map)
+
+;;(add_item_to_coordination_queue_fn demo_coord_map [1 6])
+
+
+(defn queue_poper [coord_atom] ;;takes item off queue, return args to be done, :skip if there is nothing to do, does accouting of :work_slots_left
+  (let [return_coord_map (swap! coord_atom
+                                (fn [coord_map]
+                                   (let [args_item (peek (:execution_queue coord_map))]
+                                      (cond (nil? args_item)
+                                              (assoc-in coord_map [:item-to-do-now] :skip)
+                                            (> (coord_map :work_slots_left) 0)
+                                              (-> coord_map
+                                                (update-in [:execution_queue] pop)
+                                                (update-in [:work_slots_left] dec)
+                                                (assoc-in  [:item-to-do-now] args_item))
+                                            :else
+                                                (assoc-in coord_map [:item-to-do-now] :skip)
+                                            ))))]
+    (:item-to-do-now return_coord_map )
+    ))
+
+;(let [a (atom demo_coord_map)] (queue_poper a) a)
+(defn work_slots+1 [coord_atom]
+  :WIP)
+
+
+(defn foo [& args] (vec args))
+
+
+;(add_item_to_coordination_queue (atom {}) [:a 1])
+;(add_item_to_coordination_queue (atom {:execution_queue clojure.lang.PersistentQueue/EMPTY})  [:a 1])
+
+
+        ;;TODO atom to hold results
+        ;;a way to check what needs to be evicted
+        ;;running construct
+
+
 
 
 (defn memo-lookahead-ttl [f init_cache & setupargs]
@@ -58,20 +137,16 @@
               max-consecutive-failed-retries 0
               global-max-concurrent-requests 1}}  setupargs_map
 
-         coordination_atom                    (atom {:number_currently_running 0
-                                                     :execution_queue clojure.lang.PersistentQueue/EMPTY
-                                                     :cache (into {} (for [[k v] init_cache] [k {:cache_answer(promisize v)
-                                                                                                 :status :IDLE
-                                                                                                 ;;WIP fill this out.. .
-                                                                                                 }]))
-                                                     }) ;;WRONG vs memo API... we store metadata here too
-        ;;TODO atom to hold results
-        ;;a way to check what needs to be evicted
-        ;;running construct
-
+        coordination_atom  (atom {:work_slots_left global-max-concurrent-requests
+                                  :execution_queue clojure.lang.PersistentQueue/EMPTY
+                                  :cache (into {} (for [[k v] init_cache] [k {:cache_answer (promisize v)
+                                                                              :status       :IDLE
+                                                                              :ttlt         (+ (.getTime (new java.util.Date)) threshold)
+                                                                              :ttrt         (+ (.getTime (new java.util.Date)) refresh-threshold)  }])) })
         ]
- (fn [& args]
-   (let [result_promise (promise)
+ (fn [& argsn]
+   (let [args (vec argsn)   ;;; Carefull with missig args, they should be represented as [] not nil, especially on the queue
+         result_promise (promise)
 
          c_atom_before   (swap! cache_atom (fn [cache] ))  ;;put primis in if it's appropriate to do so, in the :next spot if main spot is taken, or onto the queue
 
@@ -79,15 +154,15 @@
 
          ]
 
-   {:number_currently_running
+   {:number_currently_running 0
     :execution_queue  [{:retries_left 3 :args [1 2 3] :timeadded (now_ms)}] ;initially a clojure.lang.PersistentQueue/EMPTY
     :cache {args
              {:cache_answer attempt-promise
               :cache_next_answer attempt-promise
               :status :RUNNING   ;;IDLE , RUNNING, ERROR
-              :epoch_keep_at_most_until (+ (.getTime (new java.util.Date)) threshold)
-              :epoch_refresh_after     (+ (.getTime (new java.util.Date)) refresh-threshold)
-              :retries_left                    error-retries
+              :ttlt (+ (.getTime (new java.util.Date)) threshold)     ;;time to live till
+              :ttrt      (+ (.getTime (new java.util.Date)) refresh-threshold)   ;;time pas which to refresh
+              :retries_left             error-retries
               :consecutive-failed-retries-left max-consecutive-failed-retries
                }}
     }))
@@ -156,7 +231,7 @@ derf chache_atom, if answer available and no need to run, return with result
 (def a-promise (promise))
 (realized? a-promise)
 (future (do (println "got back a promis" @a-promise ) (println "got" @a-promise) ))
-(deliver a-promise :fred3)
+(deliver a-promise :fred4)
 
 
 
