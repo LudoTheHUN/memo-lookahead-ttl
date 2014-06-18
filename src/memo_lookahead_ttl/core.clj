@@ -115,14 +115,19 @@
   (swap! coord_atom (fn [coord_map]
       (-> coord_map
            (update-in [:cache args_array] (fn [cache_map]
-                                                   {:cache_answer (if (realized? (:cache_answer cache_map))
-                                                                    (deliver (promise) result)
-                                                                    (deliver (:cache_answer cache_map) result))
+                                                   {:cache_answer (cond ;;(nil? (:cache_answer cache_map))   ;;should never happen since we should never clean out a cache unless it is :IDLE
+                                                                        ;;  (deliver (promise) result)
+                                                                        (realized? (:cache_answer cache_map))
+                                                                          (deliver (:cache_answer cache_map) result)
+                                                                        :else
+                                                                          (deliver (promise) result))
                                                    :status        :IDLE
                                                    :ttlt          (+ (.getTime (new java.util.Date)) threshold)
                                                    :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)}
                                                             ))
            (update-in [:work_slots_left] inc)))))
+
+
 
 
 ;(deliver_a_result (atom demo_coord_map) [1 2] 45  15000 10000)
