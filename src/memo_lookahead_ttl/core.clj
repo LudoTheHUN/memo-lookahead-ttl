@@ -110,8 +110,23 @@
     ))
 
 ;(let [a (atom demo_coord_map)] (queue_poper a) a)
-(defn work_slots+1 [coord_atom]
-  :WIP)
+(defn deliver_a_result [coord_atom args_array result threshold refresh-threshold]
+  ;;switches in deliverd promis for some args_array, does accounting of :work_slots_left
+  (swap! coord_atom (fn [coord_map]
+      (-> coord_map
+           (update-in [:cache args_array] (fn [cache_map]
+                                                   {:cache_answer (if (realized? (:cache_answer cache_map))
+                                                                    (deliver (promise) result)
+                                                                    (deliver (:cache_answer cache_map) result))
+                                                   :status        :IDLE
+                                                   :ttlt          (+ (.getTime (new java.util.Date)) threshold)
+                                                   :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)}
+                                                            ))
+           (update-in [:work_slots_left] inc)))))
+
+
+;(deliver_a_result (atom demo_coord_map) [1 2] 45  15000 10000)
+;;WIP think through the retries case(s)....
 
 
 (defn foo [& args] (vec args))
