@@ -44,7 +44,7 @@
 
 (defn- now_ms [] (.getTime (new java.util.Date)))
 
-(defn- promisize [x] (let [p (promise)] (deliver p x)))
+(defn- promisize [x] (deliver (promise) x))
 
 ;;(promisize {:a 1})
 
@@ -158,22 +158,18 @@
 
 (defn purge_cache [coord_map]
  ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
-  ;;TODO consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
-
-  ;;get all args_arrays that need to be purged...
+  ;;TODO WIP.. not here consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
   (let [timenow (now_ms)
         args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (now_ms) (:ttlt v)))) (get-in coord_map [:cache]))]
-  (update-in coord_map [:cache] (fn [cache_maps]  (apply dissoc cache_maps (map first args_array_to_filter))))
+  (update-in coord_map [:cache] (fn [cache_maps]  (apply dissoc cache_maps (map first args_array_to_filter))))))
 
-  )
- )
-(purge_cache demo_coord_map)
-
+;;(purge_cache demo_coord_map)
 
 ;;WIP think through the retries case(s)....
 
 
 (defn foo [& args] (vec args))
+
 
 
 ;(add_item_to_coordination_queue (atom {}) [:a 1])
