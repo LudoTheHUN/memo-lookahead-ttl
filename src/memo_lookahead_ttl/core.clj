@@ -11,12 +11,13 @@
 ;;avoid Cache_stampede: http://en.wikipedia.org/wiki/Cache_stampede
 ;;Pure                : Use clojure primitives only
 ;;Protective          : Control number of concurrent calls to underlying function
-;;ttl with lookahead  :
+;;ttl with fetchahead : Refresh the cache value while still serving the cache
+;;dynamic strategy    : Allow cache characterystics to change dynamically, great for managing around downtimes of underlying resources of memo'ed function
 
 ;;Non aims:
-;;Cache respone times
+;;Minimal Cache respone times
 ;;Consistancy in between different cache responses in the time domain, hits for different requests are on their own hydration timeline
-;;Premptive prefetch  : If the cache function is not being used, it will not activiely hydrate
+;;Premptive prefetch  : If the cache function is not being used, it will not activiely hydrate ahead of time
 
 
 
@@ -51,7 +52,9 @@
 
 
 
-(defn get_status_args [coord_atom args_array] )
+(defn get_status_args [coord_atom args_array]
+
+  :WIP)
 
 
 (def demo_coord_map
@@ -62,15 +65,14 @@
               :status :IDLE   ;;IDLE , RUNNING, ERROR
               :ttlt   (+ (.getTime (new java.util.Date)) 10000)     ;;time to live till
               :ttrt   (+ (.getTime (new java.util.Date)) 7000)   ;;time pas which to refresh
-              :retries_left            2
               :consecutive-failed-retries-left 4
                }}
     })
 
 (defn add_promise_to_cache [coord_map args_array threshold refresh-threshold]
-  ;;takes coordination_map, creates a new one ;;creates somewhere to deposit the answer if one doesn't already exist
+  ;;takes coordination_map, creates a new one ;;creates promise to deposit the answer if one doesn't already exist
   (update-in coord_map [:cache args_array] (fn [cache_map] (if (nil? cache_map)
-                                                               (conj cache_map {:cache_answer  (promise)    ;we'll return this promise
+                                                               (conj cache_map {:cache_answer  (promise)    ;we'll return this promise, and wait for it's delivery
                                                                                 :status        :IDLE
                                                                                 :ttlt          (+ (.getTime (new java.util.Date)) threshold)
                                                                                 :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)
@@ -79,10 +81,15 @@
 
 ;;(add_promise_to_cache demo_coord_map [1 5] 1000 2000)
 
+(defn add_item_to_queue? [coord_map args_array]
+  ;Note this will works over data within a swap!, returns true if we shold do the work, false otherwise
+  ;;Should do work only if we have no result for these args or (:status :IDLE and :ttrt > now )
+  :WIP)
 
 
-(defn add_item_to_coordination_queue_fn [coord_map args_array]
+(defn add_item_to_coordination_queue [coord_map args_array]
   ;;takes coordination_map, creates a new one, adds items to queue if :IDLE
+  ;;WIP logic to determine if item should be added to queue will be done by a different fn dedicated to just this logic
  (if (= (get-in coord_map [:cache args_array :status]) :IDLE)
      (-> coord_map
          (update-in  [:execution_queue] (fn [xq] (conj xq args_array)))
@@ -108,27 +115,37 @@
                                             ))))]
     (:item-to-do-now return_coord_map )
     ))
-
 ;(let [a (atom demo_coord_map)] (queue_poper a) a)
-(defn deliver_a_result [coord_atom args_array result threshold refresh-threshold]
+
+;;Now we do the work.... and....
+
+;;TODO need a function for Exception from underlying function (Exception catching), will count number of errors and back off the :ttrt, unless max errors is reached, a retry will happen only if value is requested again after a :ttrt
+
+
+(defn deliver_a_result [coord_atom args_array result threshold refresh-threshold max-consecutive-failed-retries]
   ;;switches in deliverd promis for some args_array, does accounting of :work_slots_left
   (swap! coord_atom (fn [coord_map]
       (-> coord_map
            (update-in [:cache args_array] (fn [cache_map]
                                                    {:cache_answer (cond ;;(nil? (:cache_answer cache_map))   ;;should never happen since we should never clean out a cache unless it is :IDLE
                                                                         ;;  (deliver (promise) result)
-                                                                        (realized? (:cache_answer cache_map))
+                                                                        (not (realized? (:cache_answer cache_map)))    ;;NOTE: this is not pure, but appropriate
                                                                           (deliver (:cache_answer cache_map) result)
                                                                         :else
                                                                           (deliver (promise) result))
                                                    :status        :IDLE
                                                    :ttlt          (+ (.getTime (new java.util.Date)) threshold)
-                                                   :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)}
+                                                   :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                   :consecutive-failed-retries-left max-consecutive-failed-retries}
                                                             ))
            (update-in [:work_slots_left] inc)))))
 
 
-
+(defn purge_cache [coord_map]
+ ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
+  ;;TODO consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
+  :WIP
+  )
 
 ;(deliver_a_result (atom demo_coord_map) [1 2] 45  15000 10000)
 ;;WIP think through the retries case(s)....
@@ -148,6 +165,8 @@
 
 
 
+
+;;TODO
 (defn memo-lookahead-ttl [f init_cache & setupargs]
   (let [setupargs_map (apply hash-map setupargs)
         {:keys [threshold refresh-threshold error-retries max-consecutive-failed-retries global-max-concurrent-requests]
@@ -157,32 +176,30 @@
               max-consecutive-failed-retries 0
               global-max-concurrent-requests 1}}  setupargs_map
 
+        ;;WIP CONFIG_ATOM configuration atom, allow caching strategy to change dynamically
         coordination_atom  (atom {:work_slots_left global-max-concurrent-requests
                                   :execution_queue clojure.lang.PersistentQueue/EMPTY
                                   :cache (into {} (for [[k v] init_cache] [k {:cache_answer (promisize v)
                                                                               :status       :IDLE
                                                                               :ttlt         (+ (.getTime (new java.util.Date)) threshold)
-                                                                              :ttrt         (+ (.getTime (new java.util.Date)) refresh-threshold)  }])) })
+                                                                              :ttrt         (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                                              ::consecutive-failed-retries-left max-consecutive-failed-retries}])) })
         ]
  (fn [& argsn]
    (let [args (vec argsn)   ;;; Carefull with missig args, they should be represented as [] not nil, especially on the queue
-         result_promise (promise)
+         ;;result_promise (promise)
+         ;;c_atom_before   (swap! coordination_atom (fn [cache] ))  ;;put primis in if it's appropriate to do so, in the :next spot if main spot is taken, or onto the queue
 
-         c_atom_before   (swap! cache_atom (fn [cache] ))  ;;put primis in if it's appropriate to do so, in the :next spot if main spot is taken, or onto the queue
-
-
-
+         ;WIP CONFIG_ATOM here acertains what the config is right now
          ]
-
-   {:number_currently_running 0
-    :execution_queue  [{:retries_left 3 :args [1 2 3] :timeadded (now_ms)}] ;initially a clojure.lang.PersistentQueue/EMPTY
+   #_{:number_currently_running 0
+    :execution_queue  [[1 2 3] [:a :b] ] ;initially a clojure.lang.PersistentQueue/EMPTY
     :cache {args
              {:cache_answer attempt-promise
               :cache_next_answer attempt-promise
               :status :RUNNING   ;;IDLE , RUNNING, ERROR
               :ttlt (+ (.getTime (new java.util.Date)) threshold)     ;;time to live till
-              :ttrt      (+ (.getTime (new java.util.Date)) refresh-threshold)   ;;time pas which to refresh
-              :retries_left             error-retries
+              :ttrt (+ (.getTime (new java.util.Date)) refresh-threshold)   ;;time pas which to refresh
               :consecutive-failed-retries-left max-consecutive-failed-retries
                }}
     }))
@@ -198,30 +215,30 @@
 
 
 
-(comment
+#_(comment
 
 
        ;;  attempt-fut     (future (try  (apply f args)           ;;pacify the f
        ;;                                (catch Exception e e)))
 
-derf chache_atom, if answer available and no need to run, return with result
-  else . if need to run but answer available, return with answer, but beforehand start a future to do the run + create a primis into which answer will be placed... (via which all other consumers will block untill this is delivered)
- if no answer available, do the run directly (return with answer at the end)
-
-  doing a run:
-  via uuid
-(swap!  aquire lock on answer for updates (no one else can be running right now that thing)  )
-  if you have the lock...
-  swap! add to the queue if no slots free, if free slots, pop into to running set
-
-  star looping:
-   deref queue+runnig set
-   if in running uuid set, run
-      else test if we've timed out on waiting , sleep or release lock and throw attempt time out
-
-    run...
-     actually do the (apply f args) pacified
-     look if results is realized  wait till it is.
+;derf chache_atom, if answer available and no need to run, return with result
+;  else . if need to run but answer available, return with answer, but beforehand start a future to do the run + create a primis into which answer will be placed... (via which all other consumers will block untill this is delivered)
+; if no answer available, do the run directly (return with answer at the end)
+;
+;  doing a run
+;  via uuid
+;(swap!  aquire lock on answer for updates (no one else can be running right now that thing)  )
+;  if you have the lock...
+;  swap! add to the queue if no slots free, if free slots, pop into to running set
+;
+;  star looping:
+;   deref queue+runnig set
+;   if in running uuid set, run
+;      else test if we've timed out on waiting , sleep or release lock and throw attempt time out
+;
+;    run...
+;     actually do the (apply f args) pacified
+;     look if results is realized  wait till it is.
 (swap! start running.... add to the running set, pop from running queue)
 ;; do actial
 (if sucessfull, switch in the result )
