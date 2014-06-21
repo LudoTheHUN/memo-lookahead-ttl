@@ -7,12 +7,14 @@
 
 
 ;;AIMs:
-;;avoid Negative_cache: http://en.wikipedia.org/wiki/Negative_cache
-;;avoid Cache_stampede: http://en.wikipedia.org/wiki/Cache_stampede
-;;Pure                : Use clojure primitives only
-;;Protective          : Control number of concurrent calls to underlying function
-;;ttl with fetchahead : Refresh the cache value while still serving the cache
-;;dynamic strategy    : Allow cache characterystics to change dynamically, great for managing around downtimes of underlying resources of memo'ed function
+;;avoid Negative_cache   : http://en.wikipedia.org/wiki/Negative_cache
+;;avoid Cache_stampede   : http://en.wikipedia.org/wiki/Cache_stampede
+;;Pure                   : Use clojure primitives only
+;;Protective             : Control number of concurrent calls to underlying function
+;;ttl with fetchahead    : Refresh the cache value while still serving the cache
+;;dynamic cache dynamics : WIP Allow cache characterystics to change dynamically, great for managing around downtimes of underlying resources of memo'ed function, without taking down the cache
+;;                            ;;WIP optional automaitc reset of orignal cache dynmaics after non failing responses
+;;exponential backoff    : up to set number of attempts before error is allowed to be to returned
 
 ;;Non aims:
 ;;Minimal Cache respone times
@@ -52,39 +54,47 @@
 
 
 
-(defn get_status_args [coord_atom args_array]
-
-  :WIP)
-
-
 (def demo_coord_map
    {:work_slots_left 2
     :execution_queue  [[1 3]] ;initially a clojure.lang.PersistentQueue/EMPTY
     :cache {[1 2]
              {:cache_answer (deliver (promise) :42)
               :status :IDLE   ;;IDLE , RUNNING, ERROR
-              :ttlt   (+ (.getTime (new java.util.Date)) 10000)     ;;time to live till
-              :ttrt   (+ (.getTime (new java.util.Date)) 7000)   ;;time pas which to refresh
+              :ttlt   (+ (.getTime (new java.util.Date)) 100000)     ;;time to live till
+              :ttrt   (+ (.getTime (new java.util.Date)) 70000)   ;;time pas which to refresh
               :consecutive-failed-retries-left 4
                }}
     })
 
-(defn add_promise_to_cache [coord_map args_array threshold refresh-threshold]
+
+
+(defn add_item_to_queue? [coord_map args_array]
+  ;; Predicate function. Returns true if we shold do the work, false otherwise.
+  ;;This should be down within a swap! together with the adding of items to queue to ensure correct state transition
+  ;;Should do work only if we have no result for these args or (:status :IDLE and :ttrt > now )
+  (cond (nil? (get-in coord_map [:cache args_array]))
+          true
+        (and (= (get-in coord_map [:cache args_array :status]) :IDLE) (< (get-in coord_map [:cache args_array :ttrt]) (.getTime (new java.util.Date))))
+          true
+        :else
+          false))
+;(add_item_to_queue? demo_coord_map [2 5])
+;(add_item_to_queue? demo_coord_map [1 2])
+;(add_item_to_queue? demo_coord_map [1 7])
+
+
+(defn add_promise_to_cache [coord_map args_array threshold refresh-threshold max-consecutive-failed-retries]
   ;;takes coordination_map, creates a new one ;;creates promise to deposit the answer if one doesn't already exist
   (update-in coord_map [:cache args_array] (fn [cache_map] (if (nil? cache_map)
                                                                (conj cache_map {:cache_answer  (promise)    ;we'll return this promise, and wait for it's delivery
                                                                                 :status        :IDLE
                                                                                 :ttlt          (+ (.getTime (new java.util.Date)) threshold)
                                                                                 :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                                                :consecutive-failed-retries-left max-consecutive-failed-retries
                                                                                 })
                                                                 cache_map))))
+;(add_promise_to_cache demo_coord_map [1 5] 1000 2000 3)
 
-;;(add_promise_to_cache demo_coord_map [1 5] 1000 2000)
-
-(defn add_item_to_queue? [coord_map args_array]
-  ;Note this will works over data within a swap!, returns true if we shold do the work, false otherwise
-  ;;Should do work only if we have no result for these args or (:status :IDLE and :ttrt > now )
-  :WIP)
 
 
 (defn add_item_to_coordination_queue [coord_map args_array]
@@ -93,13 +103,14 @@
  (if (= (get-in coord_map [:cache args_array :status]) :IDLE)
      (-> coord_map
          (update-in  [:execution_queue] (fn [xq] (conj xq args_array)))
-         (update-in  [:cache args_array] (fn [cache_map] (conj cache_map {:status :QUEUED})))))
-     coord_map)
+         (update-in  [:cache args_array] (fn [cache_map] (conj cache_map {:status :QUEUED}))))
+     coord_map))
 
-;;(add_item_to_coordination_queue_fn demo_coord_map [1 6])
+;;(add_item_to_coordination_queue demo_coord_map [1 2])
 
 
-(defn queue_poper [coord_atom] ;;takes item off queue, return args to be done, :skip if there is nothing to do, does accouting of :work_slots_left
+
+(defn queue_poper! [coord_atom] ;;takes item off queue, return args to be done, :skip if there is nothing to do, does accouting of :work_slots_left
   (let [return_coord_map (swap! coord_atom
                                 (fn [coord_map]
                                    (let [args_item (peek (:execution_queue coord_map))]
@@ -113,22 +124,25 @@
                                             :else
                                                 (assoc-in coord_map [:item-to-do-now] :skip)
                                             ))))]
-    (:item-to-do-now return_coord_map )
-    ))
-;(let [a (atom demo_coord_map)] (queue_poper a) a)
+    (:item-to-do-now return_coord_map )))
+
+;(let [a (atom demo_coord_map)] (queue_poper! a))
+;(let [a (atom demo_coord_map)] (queue_poper! a) a)
+
+
 
 ;;Now we do the work.... and....
 
 ;;TODO need a function for Exception from underlying function (Exception catching), will count number of errors and back off the :ttrt, unless max errors is reached, a retry will happen only if value is requested again after a :ttrt
 
 
-(defn deliver_a_result [coord_atom args_array result threshold refresh-threshold max-consecutive-failed-retries]
+(defn deliver_a_result! [coord_atom args_array result threshold refresh-threshold max-consecutive-failed-retries]
   ;;switches in deliverd promis for some args_array, does accounting of :work_slots_left
   (swap! coord_atom (fn [coord_map]
       (-> coord_map
            (update-in [:cache args_array] (fn [cache_map]
-                                                   {:cache_answer (cond ;;(nil? (:cache_answer cache_map))   ;;should never happen since we should never clean out a cache unless it is :IDLE
-                                                                        ;;  (deliver (promise) result)
+                                                   {:cache_answer (cond (nil? (:cache_answer cache_map))   ;;should never happen since we should never clean out a cache unless it is :IDLE
+                                                                          (deliver (promise) result)
                                                                         (not (realized? (:cache_answer cache_map)))    ;;NOTE: this is not pure, but appropriate
                                                                           (deliver (:cache_answer cache_map) result)
                                                                         :else
@@ -139,15 +153,23 @@
                                                    :consecutive-failed-retries-left max-consecutive-failed-retries}
                                                             ))
            (update-in [:work_slots_left] inc)))))
-
+;(deliver_a_result! (atom demo_coord_map) [1 2] 46  15000 10000 3)
+;(deliver_a_result! (atom demo_coord_map) [1 5] 45  15000 10000 3)   ;;no where to put answer...
 
 (defn purge_cache [coord_map]
  ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
   ;;TODO consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
-  :WIP
-  )
 
-;(deliver_a_result (atom demo_coord_map) [1 2] 45  15000 10000)
+  ;;get all args_arrays that need to be purged...
+  (let [timenow (.getTime (new java.util.Date))
+        args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (.getTime (new java.util.Date)) (:ttlt v)))) (get-in coord_map [:cache]))]
+  (update-in coord_map [:cache] (fn [cache_maps]  (apply dissoc cache_maps (map first args_array_to_filter))))
+
+  )
+ )
+(purge_cache demo_coord_map)
+
+
 ;;WIP think through the retries case(s)....
 
 
