@@ -60,8 +60,8 @@
     :cache {[1 2]
              {:cache_answer (deliver (promise) :42)
               :status :IDLE   ;;IDLE , RUNNING, ERROR
-              :ttlt   (+ (.getTime (new java.util.Date)) 100000)     ;;time to live till
-              :ttrt   (+ (.getTime (new java.util.Date)) 70000)   ;;time pas which to refresh
+              :ttlt   (+ (now_ms) 100000)     ;;time to live till
+              :ttrt   (+ (now_ms) 70000)   ;;time pas which to refresh
               :consecutive-failed-retries-left 4
                }}
     })
@@ -74,7 +74,7 @@
   ;;Should do work only if we have no result for these args or (:status :IDLE and :ttrt > now )
   (cond (nil? (get-in coord_map [:cache args_array]))
           true
-        (and (= (get-in coord_map [:cache args_array :status]) :IDLE) (< (get-in coord_map [:cache args_array :ttrt]) (.getTime (new java.util.Date))))
+        (and (= (get-in coord_map [:cache args_array :status]) :IDLE) (< (get-in coord_map [:cache args_array :ttrt]) (now_ms)))
           true
         :else
           false))
@@ -88,8 +88,8 @@
   (update-in coord_map [:cache args_array] (fn [cache_map] (if (nil? cache_map)
                                                                (conj cache_map {:cache_answer  (promise)    ;we'll return this promise, and wait for it's delivery
                                                                                 :status        :IDLE
-                                                                                :ttlt          (+ (.getTime (new java.util.Date)) threshold)
-                                                                                :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                                                :ttlt          (+ (now_ms) threshold)
+                                                                                :ttrt          (+ (now_ms) refresh-threshold)
                                                                                 :consecutive-failed-retries-left max-consecutive-failed-retries
                                                                                 })
                                                                 cache_map))))
@@ -148,8 +148,8 @@
                                                                         :else
                                                                           (deliver (promise) result))
                                                    :status        :IDLE
-                                                   :ttlt          (+ (.getTime (new java.util.Date)) threshold)
-                                                   :ttrt          (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                   :ttlt          (+ (now_ms) threshold)
+                                                   :ttrt          (+ (now_ms) refresh-threshold)
                                                    :consecutive-failed-retries-left max-consecutive-failed-retries}
                                                             ))
            (update-in [:work_slots_left] inc)))))
@@ -161,8 +161,8 @@
   ;;TODO consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
 
   ;;get all args_arrays that need to be purged...
-  (let [timenow (.getTime (new java.util.Date))
-        args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (.getTime (new java.util.Date)) (:ttlt v)))) (get-in coord_map [:cache]))]
+  (let [timenow (now_ms)
+        args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (now_ms) (:ttlt v)))) (get-in coord_map [:cache]))]
   (update-in coord_map [:cache] (fn [cache_maps]  (apply dissoc cache_maps (map first args_array_to_filter))))
 
   )
@@ -203,8 +203,8 @@
                                   :execution_queue clojure.lang.PersistentQueue/EMPTY
                                   :cache (into {} (for [[k v] init_cache] [k {:cache_answer (promisize v)
                                                                               :status       :IDLE
-                                                                              :ttlt         (+ (.getTime (new java.util.Date)) threshold)
-                                                                              :ttrt         (+ (.getTime (new java.util.Date)) refresh-threshold)
+                                                                              :ttlt         (+ (now_ms) threshold)
+                                                                              :ttrt         (+ (now_ms) refresh-threshold)
                                                                               ::consecutive-failed-retries-left max-consecutive-failed-retries}])) })
         ]
  (fn [& argsn]
@@ -220,8 +220,8 @@
              {:cache_answer attempt-promise
               :cache_next_answer attempt-promise
               :status :RUNNING   ;;IDLE , RUNNING, ERROR
-              :ttlt (+ (.getTime (new java.util.Date)) threshold)     ;;time to live till
-              :ttrt (+ (.getTime (new java.util.Date)) refresh-threshold)   ;;time pas which to refresh
+              :ttlt (+ (now_ms) threshold)     ;;time to live till
+              :ttrt (+ (now_ms) refresh-threshold)   ;;time pas which to refresh
               :consecutive-failed-retries-left max-consecutive-failed-retries
                }}
     }))
@@ -300,10 +300,10 @@
 
 
 
-(.getTime (new java.util.Date))
+(now_ms)
 
 (def example_cache_data {[1 2 3]  {:cache_answer 6
-                                   :keep_until (.getTime (new java.util.Date))
+                                   :keep_until (now_ms)
                                    }
                          })
 
