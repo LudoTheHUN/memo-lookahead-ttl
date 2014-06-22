@@ -68,6 +68,19 @@
 
 
 
+
+;;WIP need to do number of cache items accounting to decide if we should purge?
+(defn purge_cache [coord_map]
+ ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
+  ;;TODO WIP.. not here consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
+  (let [timenow (now_ms)
+        args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (now_ms) (:ttlt v)))) (get-in coord_map [:cache]))
+        ;;WIP need to also delete if there are too many cache items ....
+        ]
+  (update-in coord_map [:cache] (fn [cache_maps]  (apply dissoc cache_maps (map first args_array_to_filter))))))
+;;(purge_cache demo_coord_map)
+
+
 (defn add_item_to_queue? [coord_map args_array]
   ;; Predicate function. Returns true if we shold do the work, false otherwise.
   ;;This should be down within a swap! together with the adding of items to queue to ensure correct state transition
@@ -83,7 +96,7 @@
 ;(add_item_to_queue? demo_coord_map [1 7])
 
 
-(defn add_promise_to_cache [coord_map args_array threshold refresh-threshold max-consecutive-failed-retries]
+(defn add_cache_map [coord_map args_array threshold refresh-threshold max-consecutive-failed-retries]
   ;;takes coordination_map, creates a new one ;;creates promise to deposit the answer if one doesn't already exist
   (update-in coord_map [:cache args_array] (fn [cache_map] (if (nil? cache_map)
                                                                (conj cache_map {:cache_answer  (promise)    ;we'll return this promise, and wait for it's delivery
@@ -94,6 +107,10 @@
                                                                                 })
                                                                 cache_map))))
 ;(add_promise_to_cache demo_coord_map [1 5] 1000 2000 3)
+
+(defn return_cached_promise [coord_map args_array]
+  (get-in coord_map [:cache args_array :cache_answer]))
+;;(return_cached_promise demo_coord_map [1 2])
 
 
 
@@ -114,6 +131,11 @@
         ;;TODO atom to hold results
         ;;a way to check what needs to be evicted
         ;;running construct
+
+
+
+
+
 
 
 
@@ -142,6 +164,7 @@
 ;;TODO need a function for Exception from underlying function (Exception catching), will count number of errors and back off the :ttrt, unless max errors is reached, a retry will happen only if value is requested again after a :ttrt
 
 
+
 (defn deliver_a_result! [coord_atom args_array result threshold refresh-threshold max-consecutive-failed-retries]
   ;;switches in deliverd promis for some args_array, does accounting of :work_slots_left
   (swap! coord_atom (fn [coord_map]
@@ -150,18 +173,17 @@
                                              (let  [p (:cache_answer cache_map)]
                                                    {:cache_answer (cond (nil? p)   ;;should never happen since we should never clean out a cache unless it is :IDLE
                                                                           (deliver (promise) result)
-                                                                        (not (realized? p))    ;;NOTE: this is not pure, but appropriate
-                                                                             ;;someone could realize the promise between this test and the delivery attempt, resulting in nil being return and put into :cache_answer
-                                                                             ;;need to ensure the nill is never returned
-                                                                           (do (deliver p result)
+                                                                        (not (realized? p))    ;;NOTE: this is not pure, but appropriate??
+                                                                             ;;someone could realize the promise between this test and the delivery attempt, resulting in nil being returned and put into :cache_answer
+                                                                           (do (deliver p result) ;;need to ensure the nil is never returned
                                                                              p)
                                                                         :else
-                                                                          (deliver (promise) result))
+                                                                          (deliver (promise) result))   ;; if there was a STM retry of this swap! and the promise was already delivered, we'll create another promise and deliver it immediately
                                                    :status        :IDLE
                                                    :ttlt          (+ (now_ms) threshold)
                                                    :ttrt          (+ (now_ms) refresh-threshold)
                                                    :consecutive-failed-retries-left max-consecutive-failed-retries}
-                                                            )))
+                                                  )))
            (update-in [:work_slots_left] inc)))))
 ;(deliver_a_result! (atom demo_coord_map) [1 2] 46  15000 10000 3)
 ;(deliver_a_result! (atom demo_coord_map) [1 5] 45  15000 10000 3)   ;;no where to put answer...
@@ -178,26 +200,15 @@
             (catch Exception e e))]
   @(deliver (promise) caught_exception))
 
-(exception?)
+;(exception?)
 
 
-(defn purge_cache [coord_map]
- ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
-  ;;TODO WIP.. not here consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
-  (let [timenow (now_ms)
-        args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (now_ms) (:ttlt v)))) (get-in coord_map [:cache]))]
-  (update-in coord_map [:cache] (fn [cache_maps]  (apply dissoc cache_maps (map first args_array_to_filter))))))
 
-;;(purge_cache demo_coord_map)
+
+
+
 
 ;;WIP think through the retries case(s)....
-
-
-(defn return_cached_promise [coord_map args_array]
-  (get-in coord_map [:cache args_array :cache_answer]))
-
-;;(return_cached_promise demo_coord_map [1 2])
-
 
 
 (defn foo [& args] (vec args))
