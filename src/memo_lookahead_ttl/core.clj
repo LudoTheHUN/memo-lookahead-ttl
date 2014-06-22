@@ -100,13 +100,21 @@
 (defn add_item_to_coordination_queue [coord_map args_array]
   ;;takes coordination_map, creates a new one, adds items to queue if :IDLE
   ;;WIP logic to determine if item should be added to queue will be done by a different fn dedicated to just this logic
- (if (= (get-in coord_map [:cache args_array :status]) :IDLE)
+(if (= (get-in coord_map [:cache args_array :status]) :IDLE)
      (-> coord_map
          (update-in  [:execution_queue] (fn [xq] (conj xq args_array)))
          (update-in  [:cache args_array] (fn [cache_map] (conj cache_map {:status :QUEUED}))))
      coord_map))
 
-;;(add_item_to_coordination_queue demo_coord_map [1 2])
+;(add_item_to_coordination_queue demo_coord_map [1 2])
+;(add_item_to_coordination_queue {} [:a 1])
+;(add_item_to_coordination_queue {:execution_queue clojure.lang.PersistentQueue/EMPTY}  [:a 1])
+
+
+        ;;TODO atom to hold results
+        ;;a way to check what needs to be evicted
+        ;;running construct
+
 
 
 
@@ -129,8 +137,6 @@
 ;(let [a (atom demo_coord_map)] (queue_poper! a))
 ;(let [a (atom demo_coord_map)] (queue_poper! a) a)
 
-
-
 ;;Now we do the work.... and....
 
 ;;TODO need a function for Exception from underlying function (Exception catching), will count number of errors and back off the :ttrt, unless max errors is reached, a retry will happen only if value is requested again after a :ttrt
@@ -141,20 +147,39 @@
   (swap! coord_atom (fn [coord_map]
       (-> coord_map
            (update-in [:cache args_array] (fn [cache_map]
-                                                   {:cache_answer (cond (nil? (:cache_answer cache_map))   ;;should never happen since we should never clean out a cache unless it is :IDLE
+                                             (let  [p (:cache_answer cache_map)]
+                                                   {:cache_answer (cond (nil? p)   ;;should never happen since we should never clean out a cache unless it is :IDLE
                                                                           (deliver (promise) result)
-                                                                        (not (realized? (:cache_answer cache_map)))    ;;NOTE: this is not pure, but appropriate
-                                                                          (deliver (:cache_answer cache_map) result)
+                                                                        (not (realized? p))    ;;NOTE: this is not pure, but appropriate
+                                                                             ;;someone could realize the promise between this test and the delivery attempt, resulting in nil being return and put into :cache_answer
+                                                                             ;;need to ensure the nill is never returned
+                                                                           (do (deliver p result)
+                                                                             p)
                                                                         :else
                                                                           (deliver (promise) result))
                                                    :status        :IDLE
                                                    :ttlt          (+ (now_ms) threshold)
                                                    :ttrt          (+ (now_ms) refresh-threshold)
                                                    :consecutive-failed-retries-left max-consecutive-failed-retries}
-                                                            ))
+                                                            )))
            (update-in [:work_slots_left] inc)))))
 ;(deliver_a_result! (atom demo_coord_map) [1 2] 46  15000 10000 3)
 ;(deliver_a_result! (atom demo_coord_map) [1 5] 45  15000 10000 3)   ;;no where to put answer...
+
+
+(defn deliver_error [coord_atom args_array caught_exception_result    threshold refresh-threshold max-consecutive-failed-retries]
+  :WIP
+  ;; refactor error countg? if less the max number of errors, keep old answer, inc consecutive error count, move ttl back with exponential backoff,
+     ;; else, deliver the error and reset ???
+  )
+
+(let [caught_exception
+        (try (throw (Exception. "foo"))
+            (catch Exception e e))]
+  @(deliver (promise) caught_exception))
+
+(exception?)
+
 
 (defn purge_cache [coord_map]
  ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
@@ -168,17 +193,16 @@
 ;;WIP think through the retries case(s)....
 
 
+(defn return_cached_promise [coord_map args_array]
+  (get-in coord_map [:cache args_array :cache_answer]))
+
+;;(return_cached_promise demo_coord_map [1 2])
+
+
+
 (defn foo [& args] (vec args))
 
 
-
-;(add_item_to_coordination_queue (atom {}) [:a 1])
-;(add_item_to_coordination_queue (atom {:execution_queue clojure.lang.PersistentQueue/EMPTY})  [:a 1])
-
-
-        ;;TODO atom to hold results
-        ;;a way to check what needs to be evicted
-        ;;running construct
 
 
 
