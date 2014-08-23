@@ -10,16 +10,16 @@
 ;;avoid Negative_cache   : http://en.wikipedia.org/wiki/Negative_cache
 ;;avoid Cache_stampede   : http://en.wikipedia.org/wiki/Cache_stampede
 ;;Pure                   : Use clojure primitives only
-;;Protective             : Control number of concurrent calls to underlying function
+;;Protective             : Limit number of concurrent calls to underlying function (thus protecting underlying resource from a flood of requests)
 ;;ttl with fetchahead    : Refresh the cache value while still serving the cache
-;;dynamic cache dynamics : WIP Allow cache characterystics to change dynamically, great for managing around downtimes of underlying resources of memo'ed function, without taking down the cache
+;;dynamic cache dynamics : WIP STREATH GAOL Allow cache characterystics to change dynamically, great for managing around downtimes of underlying resources of memo'ed function, without taking down the cache
 ;;                            ;;WIP optional automaitc reset of orignal cache dynmaics after non failing responses
-;;exponential backoff    : up to set number of attempts before error is allowed to be to returned
+;;exponential backoff    : NON GOAL up to set number of attempts before error is allowed to be to returned. Keep error handling simple, thrown errors are returned but not cached.
 
 ;;Non aims:
 ;;Minimal Cache respone times
 ;;Consistancy in between different cache responses in the time domain, hits for different requests are on their own hydration timeline
-;;Premptive prefetch  : If the cache function is not being used, it will not activiely hydrate ahead of time
+;;Pre-emptive prefetch  : If the cache function is not being used, it will not activiely hydrate ahead of time (vs actively fetching a fresh value while not being used)
 
 
 
@@ -61,7 +61,7 @@
              {:cache_answer (deliver (promise) :42)
               :status :IDLE   ;;IDLE , RUNNING, ERROR
               :ttlt   (+ (now_ms) 100000)     ;;time to live till
-              :ttrt   (+ (now_ms) 70000)   ;;time pas which to refresh
+              :ttrt   (+ (now_ms) 70000)      ;;time past which to refresh
               :consecutive-failed-retries-left 4
                }}
     })
@@ -72,7 +72,7 @@
 ;;WIP need to do number of cache items accounting to decide if we should purge?
 (defn purge_cache [coord_map]
  ;;looks over all cache itmes and removes those those that are :IDLE and :ttlt > now
-  ;;TODO WIP.. not here consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
+  ;;TODO WIP.. here consider adding a rand to choose if purge should happen, if it's expensive to purge with every call, this will lower the purge pressure
   (let [timenow (now_ms)
         args_array_to_filter (filter (fn [[k v]] (and (= (:status v) :IDLE) (> (now_ms) (:ttlt v)))) (get-in coord_map [:cache]))
         ;;WIP need to also delete if there are too many cache items ....
@@ -174,6 +174,7 @@
 
 (defn deliver_a_result! [coord_atom args_array result threshold refresh-threshold max-consecutive-failed-retries]
   ;;switches in deliverd promis for some args_array, does accounting of :work_slots_left
+  ;;WIP suck state out... pass a coord_map
   (swap! coord_atom (fn [coord_map]
       (-> coord_map
            (update-in [:cache args_array] (fn [cache_map]
@@ -198,9 +199,22 @@
 
 (defn deliver_error [coord_atom args_array caught_exception_result    threshold refresh-threshold max-consecutive-failed-retries]
   :WIP
-  ;; refactor error countg? if less the max number of errors, keep old answer, inc consecutive error count, move ttl back with exponential backoff,
+  ;; refactor error counting? if less the max number of errors, keep old answer, inc consecutive error count, move ttl back with exponential backoff,
      ;; else, deliver the error and reset ???
-  )
+
+  ;;:consecutive-failed-retries-left will be dec'ed
+  ;; refresh-threshold bill be moved back by max-consecutive-failed-retries - consecutive-failed-retries-left ^2
+  ;; to run out of retries is to deliver the exception to the promise... then reset the cache
+  (swap! coord_atom (fn [coord_map]
+        (-> coord_map
+             (update-in [:cache args_array] (fn [cache_map]
+                                              ;;WIP  if :consecutive-failed-retries-left then we need to proper fail
+                                              {:status        :IDLE
+                                               ;;;:ttlt          ;;;(+ (now_ms) threshold)  ;;Do not move ttl forward under error
+                                               :ttrt          (+ (now_ms) refresh-threshold)  ;;WIP move this forward depending on retries left
+                                               :consecutive-failed-retries-left (dec (:consecutive-failed-retries-left cache_map))}
+                                                    ))
+             (update-in [:work_slots_left] inc)))))
 
 (let [caught_exception
         (try (throw (Exception. "foo"))
