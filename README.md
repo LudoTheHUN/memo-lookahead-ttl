@@ -6,6 +6,10 @@ The API behaves similarly to http://clojure.github.io/core.memoize/#clojure.core
 
 ## Usage
 
+lein:
+
+`[org.clojars.ludothehun/memo-lookahead-ttl "0.1.0-SNAPSHOT"]`
+
 ```Clojure
 
 (ns your-ns
