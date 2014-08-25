@@ -32,9 +32,9 @@ The use case for this behavior is to place it in front of a resource that slowly
 
 ## Notes
 
-:ttlookup should be more then :ttl (else we will not have pre-emptively hydration)
+:ttlookup should be more then :ttl (else we will not have pre-emptive hydration).
 
-:ttlookup should be not be more then ttl*2 (else we will hold more then 2 values in the cache and needlessly delay visibility of updated values
+:ttlookup should be not be more then ttl*2 (else we will hold more then 2 values in the cache).
 
 
 ## License
