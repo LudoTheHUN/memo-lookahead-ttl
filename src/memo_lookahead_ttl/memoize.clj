@@ -20,7 +20,9 @@
   "Builds a function that given a function, returns a pluggable memoized
    version of it.  `build-memoizer` Takes a cache factory function, a function
    to memoize, and the arguments to the factory.  At least one of those
-   functions should be the function to be memoized."
+   functions should be the function to be memoized.
+   Original at https://github.com/clojure/core.memoize/blob/master/src/main/clojure/clojure/core/memoize.clj
+  "
   ([cache-factory f & args]
      (let [cache (atom (apply cache-factory f args))]
        (with-meta
