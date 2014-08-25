@@ -28,7 +28,7 @@ As long as your-memoed-function is called at least every 80ms, it will always re
 
 ## Why?
 
-The use case for this behavior is to place it in front of a resource that slowly changes over time (eg: slowly changing web content), but takes (in our example no more then 20ms, if we want to protent the caller from a wait) a long time to return. As long as there are conitnuous hits to the memo function, we will return quickly with a value at most :ttlookup ms old.
+The use case for this behavior is to place it in front of a resource that slowly changes over time (eg: slowly changing web content), but takes (in our example no more then 20ms, if we want to protect the caller from a wait) a long time to return. As long as there are conitnuous hits to the memo function, we will return quickly with a value at most :ttlookup ms old.
 
 ## Notes
 
