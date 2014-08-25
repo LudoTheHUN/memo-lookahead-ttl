@@ -25,21 +25,14 @@
              drop-nodes))))
 
 
-((key-lookup-killer 3000) {:foo {123 :A 5000 :B }
-                                :boo {3000 :C 3999 :C 4000 :D 500 :E}
-                                :noo {23 :H 700 :I 500 :E}
-                                :nn  {}})
-
-((key-lookup-killer 3000) {:a {}})
-
-
-(cca/defcache TTLlookaheadCache [cache ttl ttlookup-ms ttl-ms]
+(cca/defcache TTLlookaheadCache [cache ttl ttl-ms ttlookup-ms]
   cca/CacheProtocol
   (cca/lookup [this item]
               (let [ret (cca/lookup this item ::nope)]
                 (when-not (= ret ::nope) ret)))
   (cca/lookup [this item not-found]  ;tri
               (let [cacheitems (get cache item)]
+                 ;;(println "LOOK:cache: "this ":ttlmap" ttl "nownow:"  (System/currentTimeMillis))
                 (if (empty? cacheitems)
                   not-found
                   (let [ttlookup-keys (keys cacheitems)]
@@ -54,22 +47,25 @@
             (let [now  (System/currentTimeMillis)
                   kill-lookup-old (key-lookup-killer now)
                   kill-old (key-killer ttl ttl-ms now)]
+              ;;(println "MISS:cache: "this ":ttlmap" ttl "nownow:" now)
               (TTLlookaheadCache. (assoc-in (kill-lookup-old cache) [item (+ now ttlookup-ms)] result)
                                   (assoc (kill-old ttl) item now)  ;;;WIP drives regydration only
-                                  ttlookup-ms
                                   ttl-ms
+                                  ttlookup-ms
                                   )))
   (cca/seed [_ base]
             (let [now (System/currentTimeMillis)]
               (TTLlookaheadCache. (into {} (for [x base] [(key x) {(+ now ttlookup-ms) (val x)}]))
                                   (into {} (for [x base] [(key x) now]))
+                                  ttl-ms
                                   ttlookup-ms
-                                  ttl-ms)))
-  (cca/evict [_ key]
-             (TTLlookaheadCache. (dissoc cache key)
-                                 (dissoc ttl key)
+                                  )))
+  (cca/evict [_ k]
+             (TTLlookaheadCache. (dissoc cache k)
+                                 (dissoc ttl k)
+                                 ttl-ms
                                  ttlookup-ms
-                                 ttl-ms))
+                                 ))
   Object
   (toString [_]
             (str cache \, \space ttl \, \space ttl-ms)))
@@ -86,11 +82,28 @@
   [base & {ttl :ttl ttlookup :ttlookup :or {ttl 3000 ttlookup 4000}}]  ; should always be responsive if time to make cache value is under a second, through will be hit once ever 3000ms if under constant demand
   {:pre [(number? ttl) (number? ttlookup) (<= 0 ttl) (<= 0 ttlookup)
          (map? base)]}
-  (cca/seed (TTLlookaheadCache. {} {} ttlookup ttl) base))
+  (cca/seed (TTLlookaheadCache. {} {} ttl ttlookup) base))
 
 
 
 (quote
+
+
+ ((key-lookup-killer 3000) {:foo {123 :A 5000 :B }
+                                :boo {3000 :C 3999 :C 4000 :D 500 :E}
+                                :noo {23 :H 700 :I 500 :E}
+                                :nn  {}})
+
+
+ ((key-lookup-killer 30) {:foo {123 :A 5000 :B }
+                                :boo {3000 :C 3999 :C 4000 :D 500 :E}
+                                :noo {23 :H 700 :I 500 :E}
+                                :nn  {}})
+
+
+((key-lookup-killer 3000) {:a {}})
+
+
 
 ;(class (ttl-lookahead-cache-factory {} :ttl 1000))
 
@@ -115,7 +128,7 @@
 
 #_(def lahcache
      (cca/fifo-cache-factory
-        (ttl-lookahead-cache-factory  {} :ttl 5000 :ttlookup 6000) :threshold 3))
+        (ttl-lookahead-cache-factory  {} :ttl 5000 :ttlookup 6000) :threshold 2))
 
 
 (cca/hit lahcache ["foo"])
@@ -127,6 +140,13 @@
     (assoc :c 42)
     (assoc :d 43)
     (assoc :e 44)) :e)
+
+
+ (cca/hit (-> midified_lahcache
+    (assoc :c 42)
+    (assoc :d 43)
+    ) :e)
+
 
 
 (cca/lookup
