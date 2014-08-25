@@ -1,4 +1,4 @@
-(ns memo-lookahead-ttl.cache
+(ns memo-lookahead-ttl.memoize
   (:require [memo-lookahead-ttl.cache :as ttlkc]
             [clojure.core.memoize :as mem]
             [clojure.core.cache :as cca])
@@ -38,7 +38,9 @@
 
 
 (defn ttl-lookahead
-  "a memo function that uses the TTLlookaheadCache to give a pre-emptively hydrating behaviour"
+  "a memo function that uses the TTLlookaheadCache to give a pre-emptively hydrating behaviour.
+   Note that :ttlookup should be more then :ttl (else we will not have pre-emptively hydration)
+   and not be more then ttl*2 (else we will hold more then 2 values in the cache and needlessly delay visibility of updated values"
   ([f base & {ttl :ttl ttlookup :ttlookup :or {ttl 3000 ttlookup 4000}}]
 
     (;;mem/build-memoizer
@@ -48,49 +50,6 @@
        ttl
        ttlookup
        base)))
-
-
-
-(quote
-
-(def memoedfn (ttl-lookahead identity {}))
-
-(def memoedfn (ttl-lookahead identity {} :ttl 1000 :ttlookup 5000))
-
-;(memoedfn 3)
-
-
-(defn slow_fn [x]
-  (let [calltime (System/currentTimeMillis)]
-    (do (println "calling sleep for "x "with call time " calltime)
-      (Thread/sleep x)
-      (println "done sleeping for " x "with call time " calltime)
-      {:answer x :nowis  calltime})
-    ))
-
-(def memoedfnslow (ttl-lookahead slow_fn {} :ttl 3000 :ttlookup 4000))
-
-(time (memoedfnslow 1000))
-(time (memoedfnslow 1005))
-
-(def memoedfnslow2 (ttl-lookahead slow_fn {:a 232} :ttl 4000 :ttlookup 10000))
-(time (memoedfnslow2 1005))
-
-
-;((mem/memo-unwrap memoedfnslow)  100)
-
-(loop [anum 0]
-     (Thread/sleep 100)
-    (if (> anum 100)
-      anum
-      (do (memoedfnslow 1000)
-      (recur
-       ;;(cca/miss cach :c anum)
-         (+ 1 anum) ))))  ;{:c {1408816932449 200, 1408816932247 180}}
-
-
-
-)
 
 
 
